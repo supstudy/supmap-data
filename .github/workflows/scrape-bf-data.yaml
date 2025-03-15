@@ -1,0 +1,79 @@
+# yaml-language-server: $schema=https://json.schemastore.org/github-workflow.json
+---
+name: Scrape Bison Fute data
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: 0 1 * * *
+
+jobs:
+  scrape-bf-data:
+    runs-on: ubuntu-latest
+    steps:
+    - name: GH App get Token
+      id: get-app-token
+      uses: actions/create-github-app-token@v1
+      with:
+        app-id: ${{ secrets.GH_APP_ID }}
+        private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+    - name: Clone code (GH App)
+      uses: actions/checkout@v4
+      with:
+        token: ${{ steps.get-app-token.outputs.token }}
+    - name: Scrape data from Bison Fute
+      id: scrape
+      run: |
+        set +e
+        echo -e "${BLUE}[ STEP - Download Bison Fute data ] > Downloading data from bison fute${BLANK}"
+
+        URL_BASE="http://tipi.bison-fute.gouv.fr/bison-fute-restreint/publications-restreintes/grt/ACTION-B/"
+        DEST_DIR="./downloads"
+        
+        mkdir -p "$DEST_DIR"
+        
+        echo -e "${CYAN}[ INFO ] Fetching XML list...${BLANK}"
+        XML_FILES=$(wget --user="$USER" --password="$PASSWORD" -qO- "$URL_BASE" | grep -oP 'href="\K[^"]+\.xml')
+        
+        if [[ -z "$XML_FILES" ]]; then
+          echo -e "${RED}[ ERROR ] no XML found !${BLANK}"
+          exit 1
+        fi
+
+        echo -e "${CYAN}[ INFO ] Downloading XML files...${BLANK}"
+        echo "$XML_FILES" | xargs -n 1 -P 8 -I {} wget --user="$USER" --password="$PASSWORD" -q --show-progress -P "$DEST_DIR" "$URL_BASE/{}"
+
+        DATE=$(date +'%Y-%m-%d_%H-%M')
+        echo "DATE=$DATE" >> $GITHUB_OUTPUT
+        
+        echo -e "${CYAN}[ INFO ] Creating archive bison_fute_$DATE.tgz...${BLANK}"
+        tar -czf "bison_fute_$DATE.tgz" -C "$DEST_DIR" .
+        
+        
+        echo "${CYAN}[ INFO ] Archive created: bison_fute_$DATE.tgz"
+        echo "ARCHIVE_FILE=bison_fute_$DATE.tgz" >> $GITHUB_OUTPUT
+
+      shell: bash
+      env:
+        URL_BASE: "http://tipi.bison-fute.gouv.fr/bison-fute-restreint/publications-restreintes/grt/ACTION-B/"
+        USER: ${{ secrets.BISON_FUTE_USERNAME }}
+        PASSWORD: ${{ secrets.BISON_FUTE_PASSWORD }}
+        RED: \033[1;31m
+        GREEN: \033[1;32m
+        YELLOW: \033[1;33m
+        BLUE: \033[1;34m
+        PURPLE: \033[1;35m
+        CYAN: \033[1;36m
+        BLANK: \033[0m
+
+    - name: upload archive to GH Packages
+      run: |
+        gh release create "$DATE" bison_fute_$DATE.tgz \
+                  --title "Release $DATE" \
+                  --latest \
+                  --verify-tag=false
+      env:
+        GITHUB_TOKEN: ${{ steps.get-app-token.outputs.token }}
+        DATE: ${{ steps.scrape.outputs.DATE }}
+
+
+        
